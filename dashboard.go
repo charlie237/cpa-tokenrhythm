@@ -70,7 +70,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       <div class="sub" id="sub">正在加载…</div>
     </div>
     <div class="actions">
-      <input id="key" type="password" placeholder="管理密钥（看余额可留空；创建/注销 Key 时才需要）">
+      <input id="key" type="password" placeholder="一般不用填；只有创建/注销失败时再填面板登录密钥">
       <button id="saveKey">保存密钥</button>
       <button id="refresh" class="primary">刷新全部</button>
     </div>
@@ -130,41 +130,101 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   var latest=null;
   var creating=false;
 
-  function keyBytes(){
-    return new TextEncoder().encode(SALT+'|'+location.host+'|'+navigator.userAgent);
+  function hostCandidates(){
+    var hosts=[location.host];
+    try{
+      if(location.ancestorOrigins && location.ancestorOrigins.length){
+        hosts.push(new URL(location.ancestorOrigins[0]).host);
+      }
+    }catch(e){}
+    try{
+      if(document.referrer){hosts.push(new URL(document.referrer).host);}
+    }catch(e){}
+    var out=[], seen={};
+    for(var i=0;i<hosts.length;i++){
+      if(hosts[i]&&!seen[hosts[i]]){seen[hosts[i]]=1;out.push(hosts[i]);}
+    }
+    return out;
   }
-  function deobfuscate(payload){
+  function deobfuscateWithHost(payload, host){
     if(!payload || payload.indexOf(PREFIX)!==0){return payload;}
     try{
       var body=atob(payload.slice(PREFIX.length));
       var bytes=new Uint8Array(body.length);
       for(var i=0;i<body.length;i++){bytes[i]=body.charCodeAt(i);}
-      var kb=keyBytes();
+      var kb=new TextEncoder().encode(SALT+'|'+host+'|'+navigator.userAgent);
       for(var j=0;j<bytes.length;j++){bytes[j]^=kb[j%kb.length];}
       return new TextDecoder().decode(bytes);
     }catch(e){return payload;}
   }
+  function parseAuthPayload(raw){
+    if(!raw){return null;}
+    var hosts=hostCandidates();
+    var texts=[raw];
+    for(var i=0;i<hosts.length;i++){texts.push(deobfuscateWithHost(raw, hosts[i]));}
+    for(var t=0;t<texts.length;t++){
+      try{
+        var data=JSON.parse(texts[t]);
+        var state=(data&&data.state)?data.state:data;
+        if(state&&(state.managementKey||state.apiBase)){
+          return {apiBase:state.apiBase||'',managementKey:state.managementKey||''};
+        }
+      }catch(e){}
+    }
+    return null;
+  }
   function panelAuth(){
+    var stores=[];
+    try{stores.push(localStorage);}catch(e){}
     try{
-      var raw=localStorage.getItem('cli-proxy-auth');
-      if(!raw){return null;}
-      var data=JSON.parse(deobfuscate(raw));
-      var state=(data&&data.state)?data.state:data;
-      if(!state){return null;}
-      return {apiBase:state.apiBase||'',managementKey:state.managementKey||''};
-    }catch(e){return null;}
+      if(window.parent && window.parent!==window){stores.push(window.parent.localStorage);}
+    }catch(e){}
+    for(var i=0;i<stores.length;i++){
+      try{
+        var auth=parseAuthPayload(stores[i].getItem('cli-proxy-auth'));
+        if(auth&&auth.managementKey){return auth;}
+      }catch(e){}
+    }
+    return null;
   }
   function managementKey(){
     var auth=panelAuth();
     if(auth&&auth.managementKey){return auth.managementKey;}
     return localStorage.getItem(KEY_STORAGE)||'';
   }
+  function requestParentAuth(){
+    try{
+      if(window.parent && window.parent!==window){
+        window.parent.postMessage({source:'tokenrhythm-balance',type:'request-management-auth'}, '*');
+      }
+    }catch(e){}
+  }
+  window.addEventListener('message', function(ev){
+    var d=ev.data;
+    if(!d){return;}
+    if(typeof d==='string'){
+      try{d=JSON.parse(d);}catch(e){return;}
+    }
+    if(typeof d!=='object'){return;}
+    var key=d.managementKey||d.management_key||(d.state&&d.state.managementKey)||(d.auth&&d.auth.managementKey);
+    if(!key && d.payload){key=parseAuthPayload(typeof d.payload==='string'?d.payload:'')&&parseAuthPayload(d.payload).managementKey;}
+    if(key){
+      localStorage.setItem(KEY_STORAGE, key);
+      el('key').placeholder='已从面板复用管理密钥';
+    }
+  });
+  requestParentAuth();
   function apiBase(){
     return '';
   }
   function authHeaders(){
     var key=managementKey();
-    return {'Authorization':'Bearer '+key,'X-Management-Key':key};
+    var h={'Accept':'application/json'};
+    if(key){
+      h['Authorization']='Bearer '+key;
+      h['X-Management-Key']=key;
+    }
+    return h;
   }
   function balanceURL(force){
     var q=[];
@@ -430,9 +490,15 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
           if(typeof inner==='string'){data=JSON.parse(inner);}
         }catch(e3){}
       }
-      if(data && data.ok){return data;}
-      if(data && !data.error){data.error=data.message||data.Error||'查询失败';}
-      return data||{ok:false,error:'查询失败'};
+      if(!data){data={ok:false};}
+      if(data.ok){return data;}
+      if(!data.error){data.error=data.message||data.Error||'查询失败';}
+      var err=String(data.error||'');
+      if(resp.status===401 || /invalid[_ ]?key|unauthorized/i.test(err)){
+        data.error='创建/注销需要 CPA 管理密钥。manager 与 cpa 不同源时无法自动复用，请在上方填一次面板登录密钥。';
+        try{el('key').focus();}catch(e2){}
+      }
+      return data;
     });
   }
   function jsonHeaders(){
@@ -445,8 +511,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   function saveSessionToCPA(){
     var cookie=el('sessCookie').value.trim();
     var name=el('sessName').value.trim();
-    if(!cookie){showError('请粘贴 Token Rhythm 的 session Cookie。');return;}
-    if(!managementKey()){showError('未找到管理密钥。');return;}
+    if(!cookie){showError('请粘贴 Token Rhythm 的 session。');return;}
     el('saveSess').disabled=true;
     fetch(pluginConfigURL(),{headers:authHeaders(),credentials:'same-origin'})
       .then(function(resp){return resp.json().catch(function(){return {};});})
@@ -494,7 +559,6 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   el('saveSess').addEventListener('click',saveSessionToCPA);
   function deleteKey(id){
     if(!id){return;}
-    if(!managementKey()){showError('注销 Key 需要管理密钥。');return;}
     if(!selectedId){showError('请先选择一个账号。');return;}
     if(!confirm('确定注销这个 API Key？注销后无法再用它调用模型。')){return;}
     fetch(createURL()+'?session='+encodeURIComponent(selectedId)+'&id='+encodeURIComponent(id),{
@@ -554,9 +618,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   }
   el('createKey').addEventListener('click',function(){
     if(creating){return;}
-    var key=managementKey();
-    if(!key){showError('未找到管理密钥。');return;}
-    if(!selectedId){showError('请先选择一个 session。');return;}
+    if(!selectedId){showError('请先选择一个账号。');return;}
     creating=true;
     el('createKey').disabled=true;
     fetch(createURL(),{
