@@ -240,12 +240,17 @@ func isSafeHTTPMethod(method string) bool {
 
 type hostInvoker func(method string, payload any) (json.RawMessage, error)
 
-var hostCall hostInvoker
+var (
+	hostCall   hostInvoker
+	hostCallMu sync.Mutex
+)
 
 func invokeHost(method string, payload any) (json.RawMessage, error) {
 	if hostCall == nil {
 		return nil, fmt.Errorf("host is not available")
 	}
+	hostCallMu.Lock()
+	defer hostCallMu.Unlock()
 	return hostCall(method, payload)
 }
 
@@ -403,46 +408,18 @@ func fetchSessionReport(cfg pluginConfig, sess resolvedSession) sessionReport {
 
 func pollSessions(cfg pluginConfig, sessions []resolvedSession, force bool, epoch uint64) []sessionReport {
 	reports := make([]sessionReport, len(sessions))
-	if len(sessions) == 0 {
-		return reports
-	}
 	ttl := time.Duration(cfg.RefreshIntervalSeconds) * time.Second
-	concurrency := cfg.PollConcurrency
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	if concurrency > len(sessions) {
-		concurrency = len(sessions)
-	}
-
-	type job struct {
-		index int
-		sess  resolvedSession
-	}
-	jobs := make(chan job)
-	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range jobs {
-				if !force {
-					if cached, ok := cachedSession(epoch, item.sess.ID, ttl); ok {
-						reports[item.index] = cached
-						continue
-					}
-				}
-				report := fetchSessionReport(cfg, item.sess)
-				storeCachedSession(epoch, report)
-				reports[item.index] = report
-			}
-		}()
-	}
 	for i, sess := range sessions {
-		jobs <- job{index: i, sess: sess}
+		if !force {
+			if cached, ok := cachedSession(epoch, sess.ID, ttl); ok {
+				reports[i] = cached
+				continue
+			}
+		}
+		report := fetchSessionReport(cfg, sess)
+		storeCachedSession(epoch, report)
+		reports[i] = report
 	}
-	close(jobs)
-	wg.Wait()
 	return reports
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -70,7 +71,12 @@ func managementRegistrationResponse() managementRegistration {
 	}
 }
 
-func handleManagement(request []byte) ([]byte, error) {
+func handleManagement(request []byte) (raw []byte, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			raw, err = okEnvelope(jsonError(http.StatusOK, fmt.Sprintf("plugin panic: %v", recovered)))
+		}
+	}()
 	var req managementRequest
 	if len(request) > 0 {
 		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
@@ -116,16 +122,12 @@ func queryFlag(query map[string][]string, key string) bool {
 }
 
 func balanceResponse(req managementRequest) managementResponse {
-	payload, errFetch := balanceJSON(queryFlag(req.Query, "refresh"), queryValue(req.Query, "session"))
-	status := http.StatusOK
-	if errFetch != nil {
-		status = http.StatusBadGateway
-		if strings.Contains(errFetch.Error(), "not configured") || strings.Contains(errFetch.Error(), "unknown session") {
-			status = http.StatusBadRequest
-		}
+	payload, _ := balanceJSON(queryFlag(req.Query, "refresh"), queryValue(req.Query, "session"))
+	if len(payload) == 0 {
+		return jsonError(http.StatusOK, "empty balance response")
 	}
 	return managementResponse{
-		StatusCode: status,
+		StatusCode: http.StatusOK,
 		Headers:    jsonHeaders(),
 		Body:       payload,
 	}
@@ -153,11 +155,7 @@ func sessionsResponse(req managementRequest) managementResponse {
 		"session_count":            report.SessionCount,
 		"sessions":                 summaries,
 	})
-	status := http.StatusOK
-	if !report.OK {
-		status = http.StatusBadGateway
-	}
-	return managementResponse{StatusCode: status, Headers: jsonHeaders(), Body: body}
+	return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
 }
 
 func apiKeysResponse(req managementRequest) managementResponse {
@@ -180,7 +178,7 @@ func handleListAPIKeys(req managementRequest) managementResponse {
 	keys, errList := listAPIKeys(cfg, sess.TRSession)
 	if errList != nil {
 		body, _ := json.Marshal(listAPIKeysResponse{OK: false, Error: errList.Error(), Session: sess.ID})
-		return managementResponse{StatusCode: http.StatusBadGateway, Headers: jsonHeaders(), Body: body}
+		return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
 	}
 	body, _ := json.Marshal(listAPIKeysResponse{OK: true, Session: sess.ID, APIKeys: keys})
 	return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
@@ -207,12 +205,8 @@ func handleCreateAPIKey(req managementRequest) managementResponse {
 	}
 	created, errCreate := createAPIKey(cfg, sess, bodyReq.Name)
 	if errCreate != nil {
-		status := http.StatusBadGateway
-		if strings.Contains(errCreate.Error(), "tr_csrf") || strings.Contains(errCreate.Error(), "already has") {
-			status = http.StatusBadRequest
-		}
 		body, _ := json.Marshal(createAPIKeyResponse{OK: false, Error: errCreate.Error(), Session: sess.ID})
-		return managementResponse{StatusCode: status, Headers: jsonHeaders(), Body: body}
+		return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
 	}
 	invalidateSessionCache(sess.ID)
 	body, _ := json.Marshal(createAPIKeyResponse{OK: true, Session: sess.ID, APIKey: created})

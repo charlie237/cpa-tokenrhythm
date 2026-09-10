@@ -33,7 +33,7 @@ func TestCreateAPIKeyRequiresCSRF(t *testing.T) {
 		t.Fatalf("handleManagement() error = %v", errHandle)
 	}
 	resp := decodeManagement(t, raw)
-	if resp.StatusCode != http.StatusBadRequest {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, resp.Body)
 	}
 	if !strings.Contains(string(resp.Body), "tr_csrf") {

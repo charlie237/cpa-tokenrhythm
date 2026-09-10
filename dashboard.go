@@ -160,6 +160,9 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   function apiBase(){
     var auth=panelAuth();
     if(auth&&auth.apiBase){return auth.apiBase.replace(/\/+$/,'');}
+    if(/^manager\./i.test(location.hostname)){
+      return location.origin.replace(/\/\/manager\./i,'//cpa.');
+    }
     return '';
   }
   function authHeaders(){
@@ -359,10 +362,10 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     }
     el('sub').textContent='正在轮询 session…';
     fetch(balanceURL(force),{headers:authHeaders(),credentials:'same-origin'})
-      .then(function(resp){return resp.json().catch(function(){return {ok:false,error:'HTTP '+resp.status};});})
+      .then(parseResp)
       .then(function(data){
         if(data&&(data.ok||(data.sessions&&data.sessions.length))){showError(data.ok?'':(data.error||''));render(data);}
-        else{showError((data&&data.error)||'查询失败');el('sub').textContent='刷新失败';}
+        else{showError((data&&data.error)||'查询失败。若刚保存过 Session，等一两秒再刷新；并确认 Linux 上的 CPA 能访问 tokenrhythm.studio。');el('sub').textContent='刷新失败';}
       })
       .catch(function(err){showError('请求失败：'+err);el('sub').textContent='刷新失败';});
   }
@@ -388,6 +391,19 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     load(true);
   });
   el('refresh').addEventListener('click',function(){load(true);});
+  function parseResp(resp){
+    return resp.text().then(function(text){
+      var data=null;
+      try{data=JSON.parse(text);}catch(e){
+        var plain=String(text||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+        return {ok:false,error:'HTTP '+resp.status+(plain?(' '+plain.slice(0,240)):'')};
+      }
+      if(data && !data.ok && !data.error){
+        data.error=data.message||('HTTP '+resp.status);
+      }
+      return data||{ok:false,error:'HTTP '+resp.status};
+    });
+  }
   function jsonHeaders(){
     return Object.assign({'Content-Type':'application/json','Accept':'application/json'},authHeaders());
   }
@@ -427,7 +443,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       })
       .then(function(resp){
         if(!resp){return;}
-        return resp.json().catch(function(){return {status:resp.status};}).then(function(data){
+        return parseResp(resp).then(function(data){
           if(resp.ok && (!data||!data.error)){
             showError('');
             el('sessCookie').value='';
@@ -456,7 +472,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       credentials:'same-origin',
       body:JSON.stringify({session:selectedId,name:el('keyName').value.trim()})
     })
-      .then(function(resp){return resp.json().catch(function(){return {ok:false,error:'HTTP '+resp.status};});})
+      .then(parseResp)
       .then(function(data){
         if(data&&data.ok&&data.api_key){
           showError('');
