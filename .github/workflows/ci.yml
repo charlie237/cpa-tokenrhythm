@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Use published CLIProxyAPI module
+        run: |
+          go mod edit -dropreplace github.com/router-for-me/CLIProxyAPI/v7
+          go get github.com/router-for-me/CLIProxyAPI/v7@latest
+      - name: Test
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...

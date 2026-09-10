@@ -1,0 +1,8 @@
+/bin/
+*.dll
+*.so
+*.dylib
+*.h
+/CLIProxyAPI/
+.DS_Store
+Thumbs.db

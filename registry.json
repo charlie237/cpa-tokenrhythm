@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "tokenrhythm-balance",
+      "name": "Token Rhythm Balance",
+      "description": "Token Rhythm 多账号余额轮询与 API Key 管理。",
+      "author": "Charlie237",
+      "version": "0.2.0",
+      "repository": "https://github.com/Charlie237/cpa-tokenrhythm",
+      "homepage": "https://github.com/Charlie237/cpa-tokenrhythm",
+      "license": "MIT",
+      "tags": ["tokenrhythm", "management", "api-keys"],
+      "install": {
+        "type": "github-release"
+      }
+    }
+  ]
+}

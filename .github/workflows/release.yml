@@ -1,0 +1,86 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: so
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            ext: so
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: dll
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            ext: dylib
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            ext: dylib
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install MinGW
+        if: runner.os == 'Windows'
+        run: choco install mingw -y
+      - name: Use published CLIProxyAPI module
+        shell: bash
+        run: |
+          go mod edit -dropreplace github.com/router-for-me/CLIProxyAPI/v7
+          go get github.com/router-for-me/CLIProxyAPI/v7@latest
+      - name: Build plugin zip
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          set -euo pipefail
+          PLUGIN_ID=tokenrhythm-balance
+          VERSION="${GITHUB_REF_NAME#v}"
+          LIB="${PLUGIN_ID}.${{ matrix.ext }}"
+          ZIP="${PLUGIN_ID}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          go build -buildmode=c-shared -o "${LIB}" .
+          rm -f "${PLUGIN_ID}.h" "${PLUGIN_ID}.dll.h" || true
+          python -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_DEFLATED); z.write(sys.argv[2], sys.argv[2]); z.close()" "${ZIP}" "${LIB}"
+          mkdir -p dist
+          mv "${ZIP}" dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.zip | tee checksums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
