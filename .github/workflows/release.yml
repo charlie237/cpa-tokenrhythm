@@ -30,10 +30,6 @@ jobs:
             goos: darwin
             goarch: arm64
             ext: dylib
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
-            ext: dylib
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
