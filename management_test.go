@@ -22,8 +22,26 @@ func TestManagementRegisterIncludesCreateAPIRoute(t *testing.T) {
 	}
 }
 
-func TestCreateAPIKeyRequiresCSRF(t *testing.T) {
+func TestCreateAPIKeyWithoutCSRFStillPosts(t *testing.T) {
 	applyConfig([]byte("tr_session: sess_x\n"))
+	var sawPost bool
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		raw, _ := json.Marshal(payload)
+		var req struct {
+			Method string `json:"method"`
+			URL    string `json:"url"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		if req.Method == http.MethodGet && strings.HasSuffix(req.URL, "/api/api-keys") {
+			return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":[]}`)})
+		}
+		if req.Method == http.MethodPost && strings.HasSuffix(req.URL, "/api/api-keys") {
+			sawPost = true
+			return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":{"id":"k1","name":"test","key":"sk_x","status":"enabled"}}`)})
+		}
+		return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":{}}`)})
+	}
+	t.Cleanup(func() { hostCall = nil })
 	raw, errHandle := handleManagement(mustJSON(t, managementRequest{
 		Method: http.MethodPost,
 		Path:   "/v0/management/tokenrhythm/api-keys",
@@ -36,8 +54,8 @@ func TestCreateAPIKeyRequiresCSRF(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, resp.Body)
 	}
-	if !strings.Contains(string(resp.Body), "tr_csrf") {
-		t.Fatalf("error should mention tr_csrf, got %s", resp.Body)
+	if !sawPost {
+		t.Fatal("expected POST /api/api-keys even without tr_csrf")
 	}
 }
 

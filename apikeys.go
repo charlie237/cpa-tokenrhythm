@@ -110,9 +110,6 @@ func listAPIKeys(cfg pluginConfig, session string) ([]apiKey, error) {
 }
 
 func createAPIKey(cfg pluginConfig, sess resolvedSession, name string) (apiKey, error) {
-	if csrfFromCookie(sess.TRSession) == "" {
-		return apiKey{}, fmt.Errorf("creating API keys requires tr_csrf in the session cookie (use a full cookie string such as tr_session=...; tr_csrf=...)")
-	}
 	existing, errList := listAPIKeys(cfg, sess.TRSession)
 	active := 0
 	if errList == nil {

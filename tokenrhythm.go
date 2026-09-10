@@ -272,6 +272,7 @@ func doTrRequest(cfg pluginConfig, session, method, path string, body []byte) ([
 	}
 	if csrf := csrfFromCookie(session); csrf != "" && !isSafeHTTPMethod(method) {
 		headers["X-CSRF-Token"] = []string{csrf}
+		headers["x-csrf-token"] = []string{csrf}
 	}
 	req := map[string]any{
 		"method":  method,

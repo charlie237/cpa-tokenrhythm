@@ -57,6 +57,8 @@ th{color:var(--muted);font-weight:500}
 td.num,th.num{text-align:right}
 .table-wrap{overflow-x:auto}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+tr.active{background:rgba(37,99,235,.08)}
+button.small{padding:4px 8px;font-size:12px}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
 </style>
 </head>
@@ -76,18 +78,18 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   <div id="error" class="error" hidden></div>
   <div id="created" class="okbox" hidden></div>
   <section class="panel">
-    <h2>添加 Session</h2>
-    <p class="sub">在 Token Rhythm 浏览器里复制 Cookie，粘贴到这里保存。写入的是 CPA 插件配置，不用改 yaml。创建 API Key 需要包含 <code>tr_csrf</code>。</p>
-    <div class="row">
-      <input id="sessName" placeholder="名称（可选，如 主账号）">
-      <button id="saveSess" class="primary">保存 Session</button>
+    <h2>账号列表</h2>
+    <div class="table-wrap" id="accountTable"></div>
+    <div class="row" style="margin-top:12px">
+      <input id="sessName" placeholder="名称（可选）">
+      <input id="sessCookie" placeholder="只填 session，例如 sess_xxxx" style="flex:1;min-width:240px">
+      <button id="saveSess" class="primary">添加账号</button>
     </div>
-    <textarea id="sessCookie" placeholder="tr_session=sess_xxx; tr_csrf=yyy&#10;或只贴 sess_xxx（仅能查余额，不能创建 Key）"></textarea>
+    <p class="sub">浏览器登录 Token Rhythm → F12 → Application → Cookies → 复制 <code>tr_session</code> 的值即可，不必填 csrf。</p>
   </section>
-  <section class="sessions" id="sessionCards"></section>
   <section class="cards" id="cards"></section>
   <section class="panel">
-    <h2>账户概览</h2>
+    <h2>当前账号</h2>
     <div class="grid" id="overview"></div>
   </section>
   <section class="panel">
@@ -95,7 +97,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     <div class="grid" id="usage"></div>
   </section>
   <section class="panel">
-    <h2>API Keys</h2>
+    <h2>当前账号的 API Key</h2>
     <div class="row">
       <input id="keyName" placeholder="新 Key 名称（可留空自动命名）">
       <button id="createKey" class="primary">创建 API Key</button>
@@ -158,11 +160,6 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     return localStorage.getItem(KEY_STORAGE)||'';
   }
   function apiBase(){
-    var auth=panelAuth();
-    if(auth&&auth.apiBase){return auth.apiBase.replace(/\/+$/,'');}
-    if(/^manager\./i.test(location.hostname)){
-      return location.origin.replace(/\/\/manager\./i,'//cpa.');
-    }
     return '';
   }
   function authHeaders(){
@@ -242,13 +239,17 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   }
   function renderSessions(data){
     var list=sessionList(data);
-    el('sessionCards').innerHTML=list.map(function(s){
-      var cls='session'+(s.id===selectedId?' active':'')+(s.ok&&s.low_balance?' low':'')+(s.ok?'':' fail');
-      var bal=s.ok?esc(money(s.available)):(esc(s.error||'查询失败'));
-      var meta=(s.account_name?esc(s.account_name)+' · ':'')+'Key '+(s.api_key_count||0)+(s.has_csrf?'':' · 缺 CSRF');
-      return '<button type="button" class="'+cls+'" data-id="'+esc(s.id)+'"><div class="name">'+esc(s.name||s.id)+'</div><div class="bal">'+bal+'</div><div class="meta">'+meta+'</div></button>';
+    if(!list.length){
+      el('accountTable').innerHTML='<div class="sub">还没有账号，在下方粘贴 session 后点“添加账号”。</div>';
+      return;
+    }
+    var rows=list.map(function(s){
+      var st=s.ok?(s.low_balance?'低余额':'正常'):(s.error||'失败');
+      var btn='<button type="button" class="small'+(s.id===selectedId?' primary':'')+'" data-id="'+esc(s.id)+'">'+(s.id===selectedId?'当前':'查看')+'</button>';
+      return '<tr class="'+(s.id===selectedId?'active':'')+'"><td>'+esc(s.name||s.id)+'</td><td>'+esc(s.account_name||'-')+'</td><td class="num">'+(s.ok?esc(money(s.available)):'-')+'</td><td>'+esc(st)+'</td><td class="num">'+esc(int(s.api_key_count||0))+'</td><td>'+btn+'</td></tr>';
     }).join('');
-    var buttons=el('sessionCards').querySelectorAll('button[data-id]');
+    el('accountTable').innerHTML='<table><tr><th>名称</th><th>账号</th><th class="num">可用余额</th><th>状态</th><th class="num">Key</th><th></th></tr>'+rows+'</table>';
+    var buttons=el('accountTable').querySelectorAll('button[data-id]');
     for(var i=0;i<buttons.length;i++){
       buttons[i].addEventListener('click',function(){
         selectedId=this.getAttribute('data-id')||'';
@@ -347,7 +348,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     var who=account.name?('账号 '+account.name+' · '):'';
     var count=data.session_count||sessionList(data).length;
     el('sub').textContent=who+'共 '+count+' 个 session · 每 '+interval+' 秒轮询 · 并发 '+(data.poll_concurrency||3)+' · 数据时间 '+(data.fetched_at||'');
-    el('foot').textContent='数据来源：'+(data.base_url||'')+' · 阈值 '+(data.low_balance_threshold||0)+' · 创建 Key 需要 cookie 中包含 tr_csrf';
+    el('foot').textContent='数据来源：'+(data.base_url||'')+' · 阈值 '+(data.low_balance_threshold||0)+' · 当前账号 '+(sess.name||sess.id||'');
     schedule(interval);
   }
   function schedule(interval){
@@ -393,15 +394,27 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   el('refresh').addEventListener('click',function(){load(true);});
   function parseResp(resp){
     return resp.text().then(function(text){
+      var raw=String(text||'').trim();
+      if(!raw){
+        return {ok:false,error:'接口返回空内容。当前请求：'+balanceURL(false)};
+      }
       var data=null;
-      try{data=JSON.parse(text);}catch(e){
-        var plain=String(text||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
-        return {ok:false,error:'HTTP '+resp.status+(plain?(' '+plain.slice(0,240)):'')};
+      try{data=JSON.parse(raw);}catch(e){
+        var plain=raw.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+        return {ok:false,error:'响应不是余额 JSON：'+plain.slice(0,240)};
       }
-      if(data && !data.ok && !data.error){
-        data.error=data.message||('HTTP '+resp.status);
+      if(data && data.Body && (data.StatusCode!=null || data.Headers)){
+        try{
+          var inner=data.Body;
+          if(typeof inner==='string'){
+            try{inner=decodeURIComponent(escape(atob(inner)));}catch(e2){}
+          }
+          if(typeof inner==='string'){data=JSON.parse(inner);}
+        }catch(e3){}
       }
-      return data||{ok:false,error:'HTTP '+resp.status};
+      if(data && data.ok){return data;}
+      if(data && !data.error){data.error=data.message||data.Error||'查询失败';}
+      return data||{ok:false,error:'查询失败'};
     });
   }
   function jsonHeaders(){
@@ -443,16 +456,18 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       })
       .then(function(resp){
         if(!resp){return;}
-        return parseResp(resp).then(function(data){
-          if(resp.ok && (!data||!data.error)){
+        return resp.text().then(function(text){
+          var data={};
+          try{data=JSON.parse(text||'{}');}catch(e){}
+          if(resp.ok && !data.error){
             showError('');
             el('sessCookie').value='';
             el('created').hidden=false;
-            el('created').innerHTML='<strong>Session 已保存到 CPA 插件配置。</strong><div class="sub">正在重新轮询…</div>';
+            el('created').innerHTML='<strong>账号已保存。</strong><div class="sub">正在刷新列表…</div>';
             setTimeout(function(){load(true);},1200);
             return;
           }
-          showError((data&&(data.message||data.error))||('保存失败 HTTP '+resp.status));
+          showError((data&&(data.message||data.error))||('保存失败 HTTP '+resp.status+' '+String(text||'').slice(0,200)));
         });
       })
       .catch(function(err){showError('保存 Session 失败：'+err);})
