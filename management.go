@@ -91,6 +91,9 @@ func handleManagement(request []byte) (raw []byte, err error) {
 	path := strings.TrimRight(req.Path, "/")
 	switch {
 	case strings.Contains(req.Path, "/v0/resource/"):
+		if op := queryValue(req.Query, "op"); op != "" {
+			return okEnvelope(resourceAction(req, op))
+		}
 		if queryValue(req.Query, "format") == "json" || queryFlag(req.Query, "json") {
 			return okEnvelope(balanceResponse(req))
 		}
@@ -117,6 +120,57 @@ func queryValue(query map[string][]string, key string) string {
 		}
 	}
 	return ""
+}
+
+func resourceAction(req managementRequest, op string) managementResponse {
+	switch strings.ToLower(strings.TrimSpace(op)) {
+	case "create-key":
+		if queryValue(req.Query, "session") != "" && len(req.Body) == 0 {
+			req.Body, _ = json.Marshal(createAPIKeyRequest{
+				Session: queryValue(req.Query, "session"),
+				Name:    queryValue(req.Query, "name"),
+			})
+		}
+		return handleCreateAPIKey(req)
+	case "delete-key":
+		return handleDeleteAPIKey(req)
+	case "add-session":
+		return handleAddSession(req)
+	default:
+		return jsonError(http.StatusOK, "unknown op "+op)
+	}
+}
+
+func handleAddSession(req managementRequest) managementResponse {
+	name := queryValue(req.Query, "name")
+	cookie := queryValue(req.Query, "tr_session")
+	if cookie == "" {
+		cookie = queryValue(req.Query, "session")
+	}
+	if len(req.Body) > 0 {
+		var body struct {
+			Name      string `json:"name"`
+			TRSession string `json:"tr_session"`
+			Session   string `json:"session"`
+		}
+		if errUnmarshal := json.Unmarshal(req.Body, &body); errUnmarshal == nil {
+			if name == "" {
+				name = body.Name
+			}
+			if cookie == "" {
+				cookie = body.TRSession
+			}
+			if cookie == "" {
+				cookie = body.Session
+			}
+		}
+	}
+	item, errAdd := addExtraSession("", name, cookie)
+	if errAdd != nil {
+		return jsonError(http.StatusOK, errAdd.Error())
+	}
+	body, _ := json.Marshal(map[string]any{"ok": true, "id": item.ID, "name": item.Name})
+	return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
 }
 
 func queryFlag(query map[string][]string, key string) bool {

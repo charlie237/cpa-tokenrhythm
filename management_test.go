@@ -23,6 +23,24 @@ func TestManagementRegisterIncludesCreateAPIRoute(t *testing.T) {
 	}
 }
 
+func TestResourceAddSessionDoesNotNeedManagementBody(t *testing.T) {
+	dir := t.TempDir()
+	extraSessionsPath = dir + "/sessions.json"
+	t.Cleanup(func() { extraSessionsPath = extraSessionsFile })
+	raw, errHandle := handleManagement(mustJSON(t, managementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/resource/plugins/tokenrhythm-balance/balance",
+		Query:  map[string][]string{"op": {"add-session"}, "tr_session": {"sess_from_ui"}, "name": {"测试"}},
+	}))
+	if errHandle != nil {
+		t.Fatalf("handleManagement() error = %v", errHandle)
+	}
+	resp := decodeManagement(t, raw)
+	if !strings.Contains(string(resp.Body), `"ok":true`) {
+		t.Fatalf("body = %s", resp.Body)
+	}
+}
+
 func TestDeleteAPIKeyPostsUpstream(t *testing.T) {
 	csrfMemo = sync.Map{}
 	applyConfig([]byte("tr_session: sess_x\n"))

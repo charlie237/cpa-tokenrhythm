@@ -13,7 +13,7 @@ import (
 const (
 	pluginID              = "tokenrhythm-balance"
 	pluginName            = "Token Rhythm Balance"
-	pluginVer             = "0.2.5"
+	pluginVer             = "0.2.6"
 	defaultBase           = "https://tokenrhythm.studio"
 	defaultPollConcurrent = 3
 	maxPollConcurrent     = 16
@@ -132,6 +132,9 @@ func (c pluginConfig) resolvedSessions() []resolvedSession {
 	}
 	if len(out) == 0 {
 		add("default", "default", c.TRSession)
+	}
+	for _, sess := range loadExtraSessions() {
+		add(sess.ID, sess.Name, sess.TRSession)
 	}
 	return out
 }

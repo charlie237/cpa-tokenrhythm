@@ -127,6 +127,24 @@ func TestMaskAPIKey(t *testing.T) {
 	}
 }
 
+func TestAddExtraSessionAndResolve(t *testing.T) {
+	dir := t.TempDir()
+	extraSessionsPath = dir + "/sessions.json"
+	t.Cleanup(func() { extraSessionsPath = extraSessionsFile })
+	item, errAdd := addExtraSession("", "备用", "sess_extra")
+	if errAdd != nil {
+		t.Fatalf("addExtraSession() error = %v", errAdd)
+	}
+	if item.ID == "" || item.TRSession != "sess_extra" {
+		t.Fatalf("item = %#v", item)
+	}
+	cfg := applyConfig([]byte("tr_session: sess_main\n"))
+	sessions := cfg.resolvedSessions()
+	if len(sessions) < 2 {
+		t.Fatalf("resolvedSessions() = %#v", sessions)
+	}
+}
+
 func TestRememberCSRFFromSetCookie(t *testing.T) {
 	csrfMemo = sync.Map{}
 	session := "sess_x"

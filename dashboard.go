@@ -70,8 +70,6 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       <div class="sub" id="sub">正在加载…</div>
     </div>
     <div class="actions">
-      <input id="key" type="password" placeholder="一般不用填；只有创建/注销失败时再填面板登录密钥">
-      <button id="saveKey">保存密钥</button>
       <button id="refresh" class="primary">刷新全部</button>
     </div>
   </header>
@@ -210,7 +208,6 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     if(!key && d.payload){key=parseAuthPayload(typeof d.payload==='string'?d.payload:'')&&parseAuthPayload(d.payload).managementKey;}
     if(key){
       localStorage.setItem(KEY_STORAGE, key);
-      el('key').placeholder='已从面板复用管理密钥';
     }
   });
   requestParentAuth();
@@ -241,11 +238,23 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     }
     return balanceURL(force);
   }
+  function actionURL(op, params){
+    var path=location.pathname||'';
+    var q=['format=json','op='+encodeURIComponent(op)];
+    if(params){
+      Object.keys(params).forEach(function(k){
+        if(params[k]!=null && String(params[k])!==''){
+          q.push(encodeURIComponent(k)+'='+encodeURIComponent(params[k]));
+        }
+      });
+    }
+    return path+'?'+q.join('&');
+  }
   function createURL(){
-    return apiBase()+'/v0/management/tokenrhythm/api-keys';
+    return actionURL('create-key', {});
   }
   function pluginConfigURL(){
-    return apiBase()+'/v0/management/plugins/tokenrhythm-balance/config';
+    return actionURL('add-session', {});
   }
   function el(id){return document.getElementById(id);}
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -463,12 +472,6 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       });
     }
   }
-  el('saveKey').addEventListener('click',function(){
-    var value=el('key').value.trim();
-    if(value){localStorage.setItem(KEY_STORAGE,value);}
-    else{localStorage.removeItem(KEY_STORAGE);}
-    load(true);
-  });
   el('refresh').addEventListener('click',function(){load(true);});
   function parseResp(resp){
     return resp.text().then(function(text){
@@ -494,9 +497,8 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       if(data.ok){return data;}
       if(!data.error){data.error=data.message||data.Error||'查询失败';}
       var err=String(data.error||'');
-      if(resp.status===401 || /invalid[_ ]?key|unauthorized/i.test(err)){
-        data.error='创建/注销需要 CPA 管理密钥。manager 与 cpa 不同源时无法自动复用，请在上方填一次面板登录密钥。';
-        try{el('key').focus();}catch(e2){}
+      if(resp.status===401 || /invalid[_ ]?key|unauthorized|admin key/i.test(err)){
+        data.error='这条请求不该再走管理接口。请升级到 0.2.6 后强制刷新页面。';
       }
       return data;
     });
@@ -513,47 +515,20 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     var name=el('sessName').value.trim();
     if(!cookie){showError('请粘贴 Token Rhythm 的 session。');return;}
     el('saveSess').disabled=true;
-    fetch(pluginConfigURL(),{headers:authHeaders(),credentials:'same-origin'})
-      .then(function(resp){return resp.json().catch(function(){return {};});})
-      .then(function(cfg){
-        if(!cfg||typeof cfg!=='object'||cfg.error){cfg={};}
-        var sessions=Array.isArray(cfg.sessions)?cfg.sessions.slice():[];
-        if(!sessions.length && cfg.tr_session){
-          sessions.push({id:'default',name:'default',tr_session:String(cfg.tr_session)});
+    fetch(actionURL('add-session',{name:name,tr_session:cookie}),{credentials:'same-origin'})
+      .then(parseResp)
+      .then(function(data){
+        if(data&&data.ok){
+          showError('');
+          el('sessCookie').value='';
+          el('created').hidden=false;
+          el('created').innerHTML='<strong>账号已保存。</strong><div class="sub">正在刷新列表…</div>';
+          setTimeout(function(){load(true);},800);
+          return;
         }
-        var id=sessionSlug(name);
-        if(!id){id=sessions.length?'session-'+(sessions.length+1):'default';}
-        var found=-1;
-        for(var i=0;i<sessions.length;i++){
-          if(sessions[i]&&(sessions[i].id===id||sessions[i].tr_session===cookie)){found=i;break;}
-        }
-        var item={id:id,name:name||id,tr_session:cookie};
-        if(found>=0){sessions[found]=item;}
-        else{sessions.push(item);}
-        return fetch(pluginConfigURL(),{
-          method:'PATCH',
-          headers:jsonHeaders(),
-          credentials:'same-origin',
-          body:JSON.stringify({enabled:true,sessions:sessions,tr_session:null})
-        });
+        showError((data&&data.error)||'保存失败');
       })
-      .then(function(resp){
-        if(!resp){return;}
-        return resp.text().then(function(text){
-          var data={};
-          try{data=JSON.parse(text||'{}');}catch(e){}
-          if(resp.ok && !data.error){
-            showError('');
-            el('sessCookie').value='';
-            el('created').hidden=false;
-            el('created').innerHTML='<strong>账号已保存。</strong><div class="sub">正在刷新列表…</div>';
-            setTimeout(function(){load(true);},1200);
-            return;
-          }
-          showError((data&&(data.message||data.error))||('保存失败 HTTP '+resp.status+' '+String(text||'').slice(0,200)));
-        });
-      })
-      .catch(function(err){showError('保存 Session 失败：'+err);})
+      .catch(function(err){showError('保存失败：'+err);})
       .then(function(){el('saveSess').disabled=false;});
   }
   el('saveSess').addEventListener('click',saveSessionToCPA);
@@ -561,11 +536,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     if(!id){return;}
     if(!selectedId){showError('请先选择一个账号。');return;}
     if(!confirm('确定注销这个 API Key？注销后无法再用它调用模型。')){return;}
-    fetch(createURL()+'?session='+encodeURIComponent(selectedId)+'&id='+encodeURIComponent(id),{
-      method:'DELETE',
-      headers:authHeaders(),
-      credentials:'same-origin'
-    })
+    fetch(actionURL('delete-key',{session:selectedId,id:id}),{credentials:'same-origin'})
       .then(parseResp)
       .then(function(data){
         if(data&&data.ok){showError('');load(true);}
@@ -621,12 +592,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     if(!selectedId){showError('请先选择一个账号。');return;}
     creating=true;
     el('createKey').disabled=true;
-    fetch(createURL(),{
-      method:'POST',
-      headers:Object.assign({'Content-Type':'application/json'},authHeaders()),
-      credentials:'same-origin',
-      body:JSON.stringify({session:selectedId,name:el('keyName').value.trim()})
-    })
+    fetch(actionURL('create-key',{session:selectedId,name:el('keyName').value.trim()}),{credentials:'same-origin'})
       .then(parseResp)
       .then(function(data){
         if(data&&data.ok&&data.api_key){
@@ -642,8 +608,6 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       .catch(function(err){showError('创建失败：'+err);})
       .then(function(){creating=false;el('createKey').disabled=false;});
   });
-  var auth=panelAuth();
-  if(auth&&auth.managementKey){el('key').placeholder='已复用面板管理会话';}
   load(false);
 })();
 </script>
