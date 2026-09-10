@@ -145,6 +145,15 @@ func TestAddExtraSessionAndResolve(t *testing.T) {
 	}
 }
 
+func TestCookieWithCSRFAppendsToken(t *testing.T) {
+	csrfMemo = sync.Map{}
+	csrfMemo.Store(cookieHeader("sess_x"), "tok")
+	got := cookieWithCSRF("sess_x")
+	if got != "tr_session=sess_x; tr_csrf=tok" {
+		t.Fatalf("cookieWithCSRF() = %q", got)
+	}
+}
+
 func TestRememberCSRFFromSetCookie(t *testing.T) {
 	csrfMemo = sync.Map{}
 	session := "sess_x"

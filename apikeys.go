@@ -110,15 +110,25 @@ func listAPIKeys(cfg pluginConfig, session string) ([]apiKey, error) {
 	return parseAPIKeyList(raw), nil
 }
 
-func ensureCSRF(cfg pluginConfig, session string) {
+func ensureCSRF(cfg pluginConfig, session string) error {
 	if csrfToken(session) != "" {
-		return
+		return nil
 	}
 	_, _ = doTrGet(cfg, session, "/api/me")
+	if csrfToken(session) != "" {
+		return nil
+	}
+	doTrRaw(cfg, session, http.MethodGet, "/account/keys")
+	if csrfToken(session) != "" {
+		return nil
+	}
+	return fmt.Errorf("无法获取 CSRF。站点要求 Cookie 里有 tr_csrf 且请求头带 x-csrf-token。请重新添加账号，粘贴完整 Cookie：tr_session=...; tr_csrf=...")
 }
 
 func createAPIKey(cfg pluginConfig, sess resolvedSession, name string) (apiKey, error) {
-	ensureCSRF(cfg, sess.TRSession)
+	if errCSRF := ensureCSRF(cfg, sess.TRSession); errCSRF != nil {
+		return apiKey{}, errCSRF
+	}
 	existing, errList := listAPIKeys(cfg, sess.TRSession)
 	active := 0
 	if errList == nil {
@@ -164,7 +174,9 @@ func deleteAPIKey(cfg pluginConfig, sess resolvedSession, id string) error {
 	if id == "" {
 		return fmt.Errorf("api key id is required")
 	}
-	ensureCSRF(cfg, sess.TRSession)
-	_, errPost := doTrRequest(cfg, sess.TRSession, http.MethodPost, "/api/api-keys/"+url.PathEscape(id)+"/delete", nil)
+	if errCSRF := ensureCSRF(cfg, sess.TRSession); errCSRF != nil {
+		return errCSRF
+	}
+	_, errPost := doTrRequest(cfg, sess.TRSession, http.MethodPost, "/api/api-keys/"+url.PathEscape(id)+"/delete", []byte(`{}`))
 	return errPost
 }

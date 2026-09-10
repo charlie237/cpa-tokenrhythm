@@ -210,6 +210,18 @@ func cookieHeader(session string) string {
 	return "tr_session=" + session
 }
 
+func cookieWithCSRF(session string) string {
+	header := cookieHeader(session)
+	csrf := csrfToken(session)
+	if csrf == "" || cookieValue(header, "tr_csrf") != "" {
+		return header
+	}
+	if header == "" {
+		return "tr_csrf=" + csrf
+	}
+	return header + "; tr_csrf=" + csrf
+}
+
 func cookieValue(header, name string) string {
 	prefix := name + "="
 	for _, part := range strings.Split(cookieHeader(header), ";") {
@@ -251,10 +263,31 @@ func rememberCSRF(session string, headers map[string][]string) {
 					val := strings.TrimSpace(part[len("tr_csrf="):])
 					if val != "" {
 						csrfMemo.Store(cookieHeader(session), val)
+						persistHarvestedCSRF(session, val)
 					}
 				}
 			}
 		}
+	}
+}
+
+func persistHarvestedCSRF(session, csrf string) {
+	sessions := loadExtraSessions()
+	changed := false
+	want := cookieHeader(session)
+	for i, sess := range sessions {
+		got := cookieHeader(sess.TRSession)
+		if got != want && sess.TRSession != strings.TrimSpace(session) {
+			continue
+		}
+		if csrfFromCookie(sess.TRSession) != "" {
+			continue
+		}
+		sessions[i].TRSession = cookieHeader(sess.TRSession) + "; tr_csrf=" + csrf
+		changed = true
+	}
+	if changed {
+		_ = saveAndBump(sessions)
 	}
 }
 
@@ -295,7 +328,7 @@ func doTrRequest(cfg pluginConfig, session, method, path string, body []byte) ([
 	headers := map[string][]string{
 		"Accept":          {"*/*"},
 		"Accept-Language": {"zh-CN,zh;q=0.9,en;q=0.8"},
-		"Cookie":          {cookieHeader(session)},
+		"Cookie":          {cookieWithCSRF(session)},
 		"Origin":          {cfg.BaseURL},
 		"Referer":         {apiURL(cfg.BaseURL, "/account/keys")},
 		"User-Agent":      {defaultUserAgent},
@@ -324,6 +357,7 @@ func doTrRequest(cfg pluginConfig, session, method, path string, body []byte) ([
 		return nil, fmt.Errorf("decode host http response: %w", errUnmarshal)
 	}
 	rememberCSRF(session, resp.Headers)
+	rememberCSRF(session, hostResponseHeaders(result))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyText := strings.TrimSpace(string(resp.Body))
 		if len(bodyText) > 200 {
@@ -341,8 +375,46 @@ func doTrRequest(cfg pluginConfig, session, method, path string, body []byte) ([
 	return env.Data, nil
 }
 
+func hostResponseHeaders(raw json.RawMessage) map[string][]string {
+	var wrap struct {
+		Headers    map[string][]string `json:"Headers"`
+		HeadersAlt map[string][]string `json:"headers"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &wrap); errUnmarshal != nil {
+		return nil
+	}
+	if len(wrap.Headers) > 0 {
+		return wrap.Headers
+	}
+	return wrap.HeadersAlt
+}
+
 func doTrGet(cfg pluginConfig, session, path string) ([]byte, error) {
 	return doTrRequest(cfg, session, http.MethodGet, path, nil)
+}
+
+func doTrRaw(cfg pluginConfig, session, method, path string) {
+	headers := map[string][]string{
+		"Accept":     {"text/html,application/json;q=0.9,*/*;q=0.8"},
+		"Cookie":     {cookieWithCSRF(session)},
+		"Origin":     {cfg.BaseURL},
+		"Referer":    {apiURL(cfg.BaseURL, "/account/keys")},
+		"User-Agent": {defaultUserAgent},
+	}
+	req := map[string]any{
+		"method":  method,
+		"url":     apiURL(cfg.BaseURL, path),
+		"headers": headers,
+	}
+	result, errCall := invokeHost(pluginabi.MethodHostHTTPDo, req)
+	if errCall != nil {
+		return
+	}
+	var resp hostHTTPResponse
+	if json.Unmarshal(result, &resp) == nil {
+		rememberCSRF(session, resp.Headers)
+	}
+	rememberCSRF(session, hostResponseHeaders(result))
 }
 
 func parseFloat(raw string) float64 {

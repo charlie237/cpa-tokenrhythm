@@ -65,6 +65,9 @@ func TestDeleteAPIKeyPostsUpstream(t *testing.T) {
 			if headerValue(req.Headers, "X-CSRF-Token") != "abc" && headerValue(req.Headers, "x-csrf-token") != "abc" {
 				t.Fatalf("missing csrf on delete, headers=%v", req.Headers)
 			}
+			if !strings.Contains(headerValue(req.Headers, "Cookie"), "tr_csrf=abc") {
+				t.Fatalf("cookie missing tr_csrf: %q", headerValue(req.Headers, "Cookie"))
+			}
 			return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":{}}`)})
 		}
 		return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":{}}`)})

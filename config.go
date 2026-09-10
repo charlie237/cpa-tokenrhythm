@@ -13,7 +13,7 @@ import (
 const (
 	pluginID              = "tokenrhythm-balance"
 	pluginName            = "Token Rhythm Balance"
-	pluginVer             = "0.2.6"
+	pluginVer             = "0.2.7"
 	defaultBase           = "https://tokenrhythm.studio"
 	defaultPollConcurrent = 3
 	maxPollConcurrent     = 16
