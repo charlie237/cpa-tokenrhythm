@@ -25,7 +25,8 @@ h2{font-size:15px;margin:0 0 12px}
 .sub{color:var(--muted);font-size:12px;margin-top:4px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 input,button,select{font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--fg)}
-input{min-width:180px}
+input,textarea{min-width:180px}
+textarea{width:100%;min-height:64px;resize:vertical}
 button{cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button:disabled{opacity:.6;cursor:not-allowed}
@@ -74,6 +75,15 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   </header>
   <div id="error" class="error" hidden></div>
   <div id="created" class="okbox" hidden></div>
+  <section class="panel">
+    <h2>添加 Session</h2>
+    <p class="sub">在 Token Rhythm 浏览器里复制 Cookie，粘贴到这里保存。写入的是 CPA 插件配置，不用改 yaml。创建 API Key 需要包含 <code>tr_csrf</code>。</p>
+    <div class="row">
+      <input id="sessName" placeholder="名称（可选，如 主账号）">
+      <button id="saveSess" class="primary">保存 Session</button>
+    </div>
+    <textarea id="sessCookie" placeholder="tr_session=sess_xxx; tr_csrf=yyy&#10;或只贴 sess_xxx（仅能查余额，不能创建 Key）"></textarea>
+  </section>
   <section class="sessions" id="sessionCards"></section>
   <section class="cards" id="cards"></section>
   <section class="panel">
@@ -164,6 +174,9 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
   }
   function createURL(){
     return apiBase()+'/v0/management/tokenrhythm/api-keys';
+  }
+  function pluginConfigURL(){
+    return apiBase()+'/v0/management/plugins/tokenrhythm-balance/config';
   }
   function el(id){return document.getElementById(id);}
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -375,6 +388,61 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     load(true);
   });
   el('refresh').addEventListener('click',function(){load(true);});
+  function jsonHeaders(){
+    return Object.assign({'Content-Type':'application/json','Accept':'application/json'},authHeaders());
+  }
+  function sessionSlug(name){
+    var s=String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    return s||'';
+  }
+  function saveSessionToCPA(){
+    var cookie=el('sessCookie').value.trim();
+    var name=el('sessName').value.trim();
+    if(!cookie){showError('请粘贴 Token Rhythm 的 session Cookie。');return;}
+    if(!managementKey()){showError('未找到管理密钥。');return;}
+    el('saveSess').disabled=true;
+    fetch(pluginConfigURL(),{headers:authHeaders(),credentials:'same-origin'})
+      .then(function(resp){return resp.json().catch(function(){return {};});})
+      .then(function(cfg){
+        if(!cfg||typeof cfg!=='object'||cfg.error){cfg={};}
+        var sessions=Array.isArray(cfg.sessions)?cfg.sessions.slice():[];
+        if(!sessions.length && cfg.tr_session){
+          sessions.push({id:'default',name:'default',tr_session:String(cfg.tr_session)});
+        }
+        var id=sessionSlug(name);
+        if(!id){id=sessions.length?'session-'+(sessions.length+1):'default';}
+        var found=-1;
+        for(var i=0;i<sessions.length;i++){
+          if(sessions[i]&&(sessions[i].id===id||sessions[i].tr_session===cookie)){found=i;break;}
+        }
+        var item={id:id,name:name||id,tr_session:cookie};
+        if(found>=0){sessions[found]=item;}
+        else{sessions.push(item);}
+        return fetch(pluginConfigURL(),{
+          method:'PATCH',
+          headers:jsonHeaders(),
+          credentials:'same-origin',
+          body:JSON.stringify({enabled:true,sessions:sessions,tr_session:null})
+        });
+      })
+      .then(function(resp){
+        if(!resp){return;}
+        return resp.json().catch(function(){return {status:resp.status};}).then(function(data){
+          if(resp.ok && (!data||!data.error)){
+            showError('');
+            el('sessCookie').value='';
+            el('created').hidden=false;
+            el('created').innerHTML='<strong>Session 已保存到 CPA 插件配置。</strong><div class="sub">正在重新轮询…</div>';
+            setTimeout(function(){load(true);},1200);
+            return;
+          }
+          showError((data&&(data.message||data.error))||('保存失败 HTTP '+resp.status));
+        });
+      })
+      .catch(function(err){showError('保存 Session 失败：'+err);})
+      .then(function(){el('saveSess').disabled=false;});
+  }
+  el('saveSess').addEventListener('click',saveSessionToCPA);
   el('createKey').addEventListener('click',function(){
     if(creating){return;}
     var key=managementKey();
