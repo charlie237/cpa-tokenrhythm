@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
@@ -19,6 +20,52 @@ func TestManagementRegisterIncludesCreateAPIRoute(t *testing.T) {
 	}
 	if !hasCreate {
 		t.Fatalf("expected POST /tokenrhythm/api-keys route, got %#v", reg.Routes)
+	}
+}
+
+func TestDeleteAPIKeyPostsUpstream(t *testing.T) {
+	csrfMemo = sync.Map{}
+	applyConfig([]byte("tr_session: sess_x\n"))
+	var sawDelete bool
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		raw, _ := json.Marshal(payload)
+		var req struct {
+			Method  string              `json:"method"`
+			URL     string              `json:"url"`
+			Headers map[string][]string `json:"headers"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		if req.Method == http.MethodGet {
+			return json.Marshal(hostHTTPResponse{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Set-Cookie": {"tr_csrf=abc; Path=/"}},
+				Body:       []byte(`{"code":0,"data":{}}`),
+			})
+		}
+		if req.Method == http.MethodPost && strings.Contains(req.URL, "/api/api-keys/k1/delete") {
+			sawDelete = true
+			if headerValue(req.Headers, "X-CSRF-Token") != "abc" && headerValue(req.Headers, "x-csrf-token") != "abc" {
+				t.Fatalf("missing csrf on delete, headers=%v", req.Headers)
+			}
+			return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":{}}`)})
+		}
+		return json.Marshal(hostHTTPResponse{StatusCode: 200, Body: []byte(`{"code":0,"data":{}}`)})
+	}
+	t.Cleanup(func() { hostCall = nil })
+	raw, errHandle := handleManagement(mustJSON(t, managementRequest{
+		Method: http.MethodDelete,
+		Path:   "/v0/management/tokenrhythm/api-keys",
+		Query:  map[string][]string{"id": {"k1"}},
+	}))
+	if errHandle != nil {
+		t.Fatalf("handleManagement() error = %v", errHandle)
+	}
+	resp := decodeManagement(t, raw)
+	if !strings.Contains(string(resp.Body), `"ok":true`) {
+		t.Fatalf("body = %s", resp.Body)
+	}
+	if !sawDelete {
+		t.Fatal("expected POST /api/api-keys/k1/delete")
 	}
 }
 

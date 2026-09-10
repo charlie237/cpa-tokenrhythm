@@ -70,7 +70,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       <div class="sub" id="sub">正在加载…</div>
     </div>
     <div class="actions">
-      <input id="key" type="password" placeholder="管理密钥（可留空自动复用面板会话）">
+      <input id="key" type="password" placeholder="管理密钥（看余额可留空；创建/注销 Key 时才需要）">
       <button id="saveKey">保存密钥</button>
       <button id="refresh" class="primary">刷新全部</button>
     </div>
@@ -172,6 +172,15 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     if(selectedId){q.push('session='+encodeURIComponent(selectedId));}
     return apiBase()+'/v0/management/tokenrhythm/balance'+(q.length?'?'+q.join('&'):'');
   }
+  function reportURL(force){
+    var path=location.pathname||'';
+    if(path.indexOf('/v0/resource/')===0){
+      var q=['format=json'];
+      if(force){q.push('refresh=1');}
+      return path+'?'+q.join('&');
+    }
+    return balanceURL(force);
+  }
   function createURL(){
     return apiBase()+'/v0/management/tokenrhythm/api-keys';
   }
@@ -264,10 +273,15 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       el('keys').innerHTML='<div class="sub">该账号暂无 API Key。</div>';
       return;
     }
-    var rows=keys.map(function(k){
-      return [esc(k.name||'-'),esc(k.maskedKey||k.keyPrefix||'-'),esc(k.status||'-'),esc(k.createdAt||'-'),esc(k.lastUsedAt||'-')];
-    });
-    el('keys').innerHTML=table(['名称','Key','状态','创建时间','最近使用'],rows);
+    var body=keys.map(function(k){
+      var del='<button type="button" class="small" data-del="'+esc(k.id)+'">注销</button>';
+      return '<tr><td>'+esc(k.name||'-')+'</td><td>'+esc(k.maskedKey||k.keyPrefix||'-')+'</td><td>'+esc(k.status||'-')+'</td><td>'+esc(k.createdAt||'-')+'</td><td>'+del+'</td></tr>';
+    }).join('');
+    el('keys').innerHTML='<table><tr><th>名称</th><th>Key</th><th>状态</th><th>创建时间</th><th></th></tr>'+body+'</table>';
+    var buttons=el('keys').querySelectorAll('button[data-del]');
+    for(var i=0;i<buttons.length;i++){
+      buttons[i].addEventListener('click',function(){deleteKey(this.getAttribute('data-del'));});
+    }
   }
   function render(data){
     latest=data;
@@ -356,13 +370,17 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
     timer=setInterval(function(){load(false);},Math.max(5,interval)*1000);
   }
   function load(force){
-    var key=managementKey();
-    if(!key){
-      showError('未找到管理密钥：请在面板登录以复用会话，或在上方输入管理密钥后点击“保存密钥”。');
-      return;
+    el('sub').textContent='正在轮询账号…';
+    var url=reportURL(force);
+    var opts={credentials:'same-origin'};
+    if(url.indexOf('/v0/management/')>=0){
+      if(!managementKey()){
+        showError('当前页面不在插件资源路径下，查看余额需要管理密钥。');
+        return;
+      }
+      opts.headers=authHeaders();
     }
-    el('sub').textContent='正在轮询 session…';
-    fetch(balanceURL(force),{headers:authHeaders(),credentials:'same-origin'})
+    fetch(url,opts)
       .then(parseResp)
       .then(function(data){
         if(data&&(data.ok||(data.sessions&&data.sessions.length))){showError(data.ok?'':(data.error||''));render(data);}
@@ -474,6 +492,66 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
       .then(function(){el('saveSess').disabled=false;});
   }
   el('saveSess').addEventListener('click',saveSessionToCPA);
+  function deleteKey(id){
+    if(!id){return;}
+    if(!managementKey()){showError('注销 Key 需要管理密钥。');return;}
+    if(!selectedId){showError('请先选择一个账号。');return;}
+    if(!confirm('确定注销这个 API Key？注销后无法再用它调用模型。')){return;}
+    fetch(createURL()+'?session='+encodeURIComponent(selectedId)+'&id='+encodeURIComponent(id),{
+      method:'DELETE',
+      headers:authHeaders(),
+      credentials:'same-origin'
+    })
+      .then(parseResp)
+      .then(function(data){
+        if(data&&data.ok){showError('');load(true);}
+        else{showError((data&&data.error)||'注销失败');}
+      })
+      .catch(function(err){showError('注销失败：'+err);});
+  }
+  function importKeyToProvider(apiKey){
+    var secret=apiKey&&apiKey.key;
+    if(!secret||!managementKey()){return;}
+    fetch('/v0/management/openai-compatibility',{headers:authHeaders(),credentials:'same-origin'})
+      .then(function(resp){return resp.json().catch(function(){return {};});})
+      .then(function(data){
+        var list=data['openai-compatibility']||[];
+        var idx=-1;
+        for(var i=0;i<list.length;i++){
+          if(String(list[i].name||'')==='tokenrhythm'){idx=i;break;}
+        }
+        var keys=[];
+        if(idx>=0){keys=(list[idx]['api-key-entries']||[]).slice();}
+        for(var j=0;j<keys.length;j++){
+          if(keys[j]&&keys[j]['api-key']===secret){return;}
+        }
+        keys.push({'api-key':secret});
+        if(idx>=0){
+          return fetch('/v0/management/openai-compatibility',{
+            method:'PATCH',
+            headers:jsonHeaders(),
+            credentials:'same-origin',
+            body:JSON.stringify({name:'tokenrhythm',value:{'api-key-entries':keys}})
+          });
+        }
+        list.push({name:'tokenrhythm','base-url':'https://tokenrhythm.studio/v1','api-key-entries':keys,models:[]});
+        return fetch('/v0/management/openai-compatibility',{
+          method:'PUT',
+          headers:jsonHeaders(),
+          credentials:'same-origin',
+          body:JSON.stringify(list)
+        });
+      })
+      .then(function(resp){
+        if(!resp){return;}
+        if(resp.ok){
+          var box=el('created');
+          box.hidden=false;
+          box.innerHTML=(box.innerHTML||'')+'<div class="sub">已尝试写入 CPA 提供商 tokenrhythm（https://tokenrhythm.studio/v1）。</div>';
+        }
+      })
+      .catch(function(){});
+  }
   el('createKey').addEventListener('click',function(){
     if(creating){return;}
     var key=managementKey();
@@ -493,6 +571,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:8px 0 24px}
           showError('');
           showCreated(data.api_key);
           el('keyName').value='';
+          if(data.api_key.key){importKeyToProvider(data.api_key);}
           load(true);
         }else{
           showError((data&&data.error)||'创建 API Key 失败');

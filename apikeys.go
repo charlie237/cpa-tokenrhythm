@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -109,7 +110,15 @@ func listAPIKeys(cfg pluginConfig, session string) ([]apiKey, error) {
 	return parseAPIKeyList(raw), nil
 }
 
+func ensureCSRF(cfg pluginConfig, session string) {
+	if csrfToken(session) != "" {
+		return
+	}
+	_, _ = doTrGet(cfg, session, "/api/me")
+}
+
 func createAPIKey(cfg pluginConfig, sess resolvedSession, name string) (apiKey, error) {
+	ensureCSRF(cfg, sess.TRSession)
 	existing, errList := listAPIKeys(cfg, sess.TRSession)
 	active := 0
 	if errList == nil {
@@ -148,4 +157,14 @@ func createAPIKey(cfg pluginConfig, sess resolvedSession, name string) (apiKey, 
 		created.Status = "enabled"
 	}
 	return sanitizeAPIKey(created, true), nil
+}
+
+func deleteAPIKey(cfg pluginConfig, sess resolvedSession, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("api key id is required")
+	}
+	ensureCSRF(cfg, sess.TRSession)
+	_, errPost := doTrRequest(cfg, sess.TRSession, http.MethodPost, "/api/api-keys/"+url.PathEscape(id)+"/delete", nil)
+	return errPost
 }

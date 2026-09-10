@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestCookieHeader(t *testing.T) {
 	cases := []struct {
@@ -121,5 +124,16 @@ func TestParseAPIKeyList(t *testing.T) {
 func TestMaskAPIKey(t *testing.T) {
 	if got := maskAPIKey("sk_abcdefghijklmnop"); got != "sk_abc...mnop" {
 		t.Fatalf("maskAPIKey() = %q", got)
+	}
+}
+
+func TestRememberCSRFFromSetCookie(t *testing.T) {
+	csrfMemo = sync.Map{}
+	session := "sess_x"
+	rememberCSRF(session, map[string][]string{
+		"Set-Cookie": {"tr_csrf=token-from-set-cookie; Path=/; HttpOnly"},
+	})
+	if got := csrfToken(session); got != "token-from-set-cookie" {
+		t.Fatalf("csrfToken() = %q", got)
 	}
 }

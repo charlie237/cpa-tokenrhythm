@@ -225,6 +225,39 @@ func csrfFromCookie(session string) string {
 	return cookieValue(session, "tr_csrf")
 }
 
+var csrfMemo sync.Map
+
+func csrfToken(session string) string {
+	if v := csrfFromCookie(session); v != "" {
+		return v
+	}
+	if v, ok := csrfMemo.Load(cookieHeader(session)); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func rememberCSRF(session string, headers map[string][]string) {
+	for name, values := range headers {
+		if !strings.EqualFold(name, "Set-Cookie") {
+			continue
+		}
+		for _, raw := range values {
+			for _, part := range strings.Split(raw, ";") {
+				part = strings.TrimSpace(part)
+				if strings.HasPrefix(strings.ToLower(part), "tr_csrf=") {
+					val := strings.TrimSpace(part[len("tr_csrf="):])
+					if val != "" {
+						csrfMemo.Store(cookieHeader(session), val)
+					}
+				}
+			}
+		}
+	}
+}
+
 func apiURL(baseURL, path string) string {
 	return strings.TrimRight(baseURL, "/") + path
 }
@@ -270,7 +303,7 @@ func doTrRequest(cfg pluginConfig, session, method, path string, body []byte) ([
 	if len(body) > 0 {
 		headers["Content-Type"] = []string{"application/json"}
 	}
-	if csrf := csrfFromCookie(session); csrf != "" && !isSafeHTTPMethod(method) {
+	if csrf := csrfToken(session); csrf != "" && !isSafeHTTPMethod(method) {
 		headers["X-CSRF-Token"] = []string{csrf}
 		headers["x-csrf-token"] = []string{csrf}
 	}
@@ -290,6 +323,7 @@ func doTrRequest(cfg pluginConfig, session, method, path string, body []byte) ([
 	if errUnmarshal := json.Unmarshal(result, &resp); errUnmarshal != nil {
 		return nil, fmt.Errorf("decode host http response: %w", errUnmarshal)
 	}
+	rememberCSRF(session, resp.Headers)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyText := strings.TrimSpace(string(resp.Body))
 		if len(bodyText) > 200 {

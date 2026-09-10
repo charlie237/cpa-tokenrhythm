@@ -60,7 +60,12 @@ func managementRegistrationResponse() managementRegistration {
 			{
 				Method:      http.MethodPost,
 				Path:        "/tokenrhythm/api-keys",
-				Description: "Creates an API key on a Token Rhythm session. Requires tr_csrf in the session cookie.",
+				Description: "Creates an API key on a Token Rhythm session.",
+			},
+			{
+				Method:      http.MethodDelete,
+				Path:        "/tokenrhythm/api-keys",
+				Description: "Deletes a Token Rhythm API key. Query: session, id.",
 			},
 		},
 		Resources: []resourceRoute{{
@@ -86,6 +91,9 @@ func handleManagement(request []byte) (raw []byte, err error) {
 	path := strings.TrimRight(req.Path, "/")
 	switch {
 	case strings.Contains(req.Path, "/v0/resource/"):
+		if queryValue(req.Query, "format") == "json" || queryFlag(req.Query, "json") {
+			return okEnvelope(balanceResponse(req))
+		}
 		return okEnvelope(resourceResponse(dashboardHTML()))
 	case strings.HasSuffix(path, "/api-keys"):
 		return okEnvelope(apiKeysResponse(req))
@@ -159,10 +167,44 @@ func sessionsResponse(req managementRequest) managementResponse {
 }
 
 func apiKeysResponse(req managementRequest) managementResponse {
-	if strings.EqualFold(strings.TrimSpace(req.Method), http.MethodPost) {
+	switch strings.ToUpper(strings.TrimSpace(req.Method)) {
+	case http.MethodPost:
 		return handleCreateAPIKey(req)
+	case http.MethodDelete:
+		return handleDeleteAPIKey(req)
+	default:
+		return handleListAPIKeys(req)
 	}
-	return handleListAPIKeys(req)
+}
+
+func handleDeleteAPIKey(req managementRequest) managementResponse {
+	cfg, _ := snapshotConfig()
+	var bodyReq struct {
+		Session string `json:"session"`
+		ID      string `json:"id"`
+	}
+	if len(req.Body) > 0 {
+		_ = json.Unmarshal(req.Body, &bodyReq)
+	}
+	sessionID := strings.TrimSpace(bodyReq.Session)
+	if sessionID == "" {
+		sessionID = queryValue(req.Query, "session")
+	}
+	id := strings.TrimSpace(bodyReq.ID)
+	if id == "" {
+		id = queryValue(req.Query, "id")
+	}
+	sess, ok := cfg.sessionByID(sessionID)
+	if !ok {
+		return jsonError(http.StatusOK, "unknown or unconfigured session")
+	}
+	if errDel := deleteAPIKey(cfg, sess, id); errDel != nil {
+		body, _ := json.Marshal(map[string]any{"ok": false, "error": errDel.Error(), "session": sess.ID})
+		return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
+	}
+	invalidateSessionCache(sess.ID)
+	body, _ := json.Marshal(map[string]any{"ok": true, "session": sess.ID, "id": id})
+	return managementResponse{StatusCode: http.StatusOK, Headers: jsonHeaders(), Body: body}
 }
 
 func handleListAPIKeys(req managementRequest) managementResponse {

@@ -40,11 +40,14 @@
 | `/api/me` | 账号基础信息与状态 |
 | `/api/wallet/expiring-credits?page=1&pageSize=20` | 即将过期额度批次 |
 | `/api/api-keys` | API Key 列表 |
-| `POST /api/api-keys` | 创建 API Key（body: `{"name":"..."}`，需 `X-CSRF-Token`） |
+| `POST /api/api-keys` | 创建 API Key（`{"name":"..."}`，请求头发 `x-csrf-token`） |
+| `POST /api/api-keys/{id}/disable` | 停用 Key |
+| `POST /api/api-keys/{id}/delete` | 注销/删除 Key |
 | `/api/api-keys/usage` | 逐 Key 用量 |
-| `/api/wallet/transactions`、`/api/call-logs/page` | 钱包流水、调用日志（分页） |
+| `/api/wallet/transactions`、`/api/call-logs/page` | 钱包流水、调用日志 |
 | `/api/models` | 可用模型列表 |
-| `/api/referrals/me` | 邀请返利信息 |
+| `/api/audit-logs` | 操作日志 |
+| `/api/referrals/me` | 邀请返利 |
 
 
 ## 构建
